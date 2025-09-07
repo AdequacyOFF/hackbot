@@ -1,0 +1,5 @@
+aiogram==3.*
+python-docx
+docxtpl
+python-dateutil
+python-dotenv
