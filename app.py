@@ -4,7 +4,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties  # <-- новое
 from config import settings
 from persistence.db import init_schema
-
+from aiogram.fsm.storage.memory import MemoryStorage
 from bot.handlers import common, participant_apply, participant_results, participant_suggest, admin
 from bot.middleware.role_guard import AdminOnlyMiddleware
 
@@ -19,7 +19,7 @@ async def main():
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     # Пользовательские роутеры
     dp.include_router(common.router)
