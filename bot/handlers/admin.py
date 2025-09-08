@@ -8,6 +8,7 @@ from ..keyboards import kb_formats
 from persistence import repositories as repo
 from services.report import render_report
 from bot.cbdata import pack, unpack
+from aiogram.types import FSInputFile
 
 router = Router(name="admin")
 
@@ -204,10 +205,18 @@ async def sug_accept(cq: CallbackQuery):
     await cq.message.edit_text("Заявка принята и добавлена в список соревнований.")
     await cq.answer()
 
-@router.callback_query(F.data.startswith("sug_no"))
-async def sug_reject(cq: CallbackQuery):
+@router.callback_query(F.data.startswith("gen_report"))
+async def gen_report(cq: CallbackQuery):
     _, v = unpack(cq.data)
-    s_id = int(v)
-    repo.suggestion_update_status(s_id, "rejected")
-    await cq.message.edit_text("Заявка отклонена.")
+    comp_id = int(v)
+    try:
+        path = render_report(comp_id)
+    except FileNotFoundError as e:
+        await cq.message.answer(str(e))
+        await cq.answer()
+        return
+
+    # <-- вот это ключевая строка: НЕ open(...), а FSInputFile
+    doc = FSInputFile(path, filename=os.path.basename(path))
+    await cq.message.answer_document(document=doc, caption="Готовый рапорт")
     await cq.answer()

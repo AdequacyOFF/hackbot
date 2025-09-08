@@ -4,6 +4,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 RANKS = ["ст.сержант", "сержант", "мл.сержант", "рядовой"]
 CURATORS = ["ДАС и ТПВ", "ХТА"]
 FORMAT_CHOICES = ["онлайн", "офлайн"]
+BACK_BUTTON_TEXT = "⬅️ В меню"
 
 def kb_menu(is_admin: bool) -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
@@ -12,6 +13,7 @@ def kb_menu(is_admin: bool) -> ReplyKeyboardMarkup:
     b.add(KeyboardButton(text="Предложить соревнование"))
     if is_admin:
         b.row(KeyboardButton(text="Админ-меню"))
+    b.row(KeyboardButton(text=BACK_BUTTON_TEXT))
     return b.as_markup(resize_keyboard=True)
 
 def kb_ranks() -> ReplyKeyboardMarkup:
