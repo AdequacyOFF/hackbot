@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dateutil import tz
 from dotenv import load_dotenv
 
@@ -8,7 +8,9 @@ load_dotenv()
 @dataclass
 class Settings:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-    ADMIN_IDS: set[int] = set(int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x.strip().isdigit())
+    ADMIN_IDS: set[int] = field(default_factory=lambda: {
+        int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+    })
     TZ = tz.gettz("Europe/Rome")
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, "data")

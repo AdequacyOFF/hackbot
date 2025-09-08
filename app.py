@@ -1,26 +1,37 @@
 import asyncio, logging
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties  # <-- новое
 from config import settings
 from persistence.db import init_schema
 
-# Импортируйте свои роутеры после разнесения логики:
-# from bot.handlers import common, participant_apply, participant_results, participant_suggest, admin
+from bot.handlers import common, participant_apply, participant_results, participant_suggest, admin
+from bot.middleware.role_guard import AdminOnlyMiddleware
 
 async def main():
     if not settings.BOT_TOKEN:
         raise RuntimeError("Set BOT_TOKEN in .env")
+
     init_schema()
-    bot = Bot(settings.BOT_TOKEN, parse_mode=ParseMode.HTML)
+
+    # aiogram >= 3.7: parse_mode через default=DefaultBotProperties(...)
+    bot = Bot(
+        token=settings.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher()
 
-    # dp.include_router(common.router)
-    # dp.include_router(participant_apply.router)
-    # dp.include_router(participant_results.router)
-    # dp.include_router(participant_suggest.router)
-    # dp.include_router(admin.router)
+    # Пользовательские роутеры
+    dp.include_router(common.router)
+    dp.include_router(participant_apply.router)
+    dp.include_router(participant_results.router)
+    dp.include_router(participant_suggest.router)
 
-    # Временно можно подключить ваш монолитный router тут, если он у вас в одном файле.
+    # Админский роутер — оборачиваем middleware-ом
+    admin_router = admin.router
+    admin_router.message.middleware(AdminOnlyMiddleware())
+    admin_router.callback_query.middleware(AdminOnlyMiddleware())
+    dp.include_router(admin_router)
 
     await dp.start_polling(bot)
 
