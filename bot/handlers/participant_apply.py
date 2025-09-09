@@ -5,8 +5,9 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from ..states import ApplyStates
 from ..validators import valid_fio, valid_group
-from ..keyboards import kb_ranks, kb_numbers, kb_curators
+from ..keyboards import kb_ranks, kb_menu, kb_numbers, kb_curators, CURATORS
 from persistence import repositories as repo
+from config import settings
 
 router = Router(name="participant_apply")
 
@@ -126,7 +127,25 @@ async def curator_set(m: Message, state: FSMContext):
         user_id=m.from_user.id
     )
     repo.members_add_bulk(team_id, data["members"])
+    is_admin = m.from_user.id in settings.ADMIN_IDS
+    # (опционально) вытащим название соревнования, если есть такой репозиторийный метод
+    comp_title = ""
+    try:
+        comp = repo.competition_get(comp_id)  # если такого метода нет — убери этот блок
+        comp_title = comp["title"]
+    except Exception:
+        pass
 
+    await state.clear()
+    await m.answer(
+        "Заявка принята ✅\n"
+        + (f"Соревнование: {comp_title}\n" if comp_title else "")
+        + f"Команда: {data['team_name']}\n"
+          f"Участников: {data['team_size']}\n"
+          f"Куратор: {curator}\n"
+          f"Место: {data['location']}",
+        reply_markup=kb_menu(is_admin=is_admin)
+    )
     # Итоговый список команды
     members_txt = "\n".join([f"{o}. {r} {f} ({g} уч. гр.)" for o, r, f, g in data["members"]])
     await m.answer(

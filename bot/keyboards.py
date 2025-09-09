@@ -19,7 +19,7 @@ def kb_menu(is_admin: bool) -> ReplyKeyboardMarkup:
 def kb_ranks() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
     for r in RANKS: b.add(KeyboardButton(text=r))
-    return b.as_markup(resize_keyboard=True, one_time_keyboard=True)
+    return b.as_markup(resize_keyboard=True)
 
 def kb_curators() -> ReplyKeyboardMarkup:
     b = ReplyKeyboardBuilder()
