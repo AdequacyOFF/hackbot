@@ -1,8 +1,10 @@
-import os, sqlite3
+from __future__ import annotations
+import os
+import sqlite3
 from contextlib import closing
 from docxtpl import DocxTemplate
 from config import settings
-from services.dates import human_dates_with_times
+from services.dates import human_dates_with_times  # важно: берём новую реализацию
 
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(settings.DB_PATH)
@@ -33,12 +35,11 @@ def build_context(comp_id: int) -> dict:
 
     def team_dict(t: sqlite3.Row) -> dict:
         mems = members_by_team.get(t["id"], [])
-        # на всякий — сортируем по ordinal
         mems_sorted = sorted(mems, key=lambda m: m["ordinal"])
         return {
             "name": t["name"],
             "location": t["location"],
-            "curator": t["curator"],
+            "curator": (t["curator"] or "").strip(),
             "members": [
                 {
                     "ordinal": m["ordinal"],
@@ -50,23 +51,30 @@ def build_context(comp_id: int) -> dict:
             ],
         }
 
-    def _curator(v: str | None) -> str:
-        return (v or "").strip()
+    teams_das = [team_dict(t) for t in teams if (t["curator"] or "").strip() == "ДАС и ТПВ"]
+    teams_hta = [team_dict(t) for t in teams if (t["curator"] or "").strip() == "ХТА"]
 
-    teams_das = [team_dict(t) for t in teams if _curator(t["curator"]) == "ДАС и ТПВ"]
-    teams_hta = [team_dict(t) for t in teams if _curator(t["curator"]) == "ХТА"]
-
+    # Показывать строки «Ответственный …» только если есть соответствующие команды
+    show_resp_das = len(teams_das) > 0
+    show_resp_hta = len(teams_hta) > 0
 
     return {
         "comp": {
             "title": comp["title"],
             "sponsor": comp["sponsor"] or "-",
-            "format": comp["format"],
-            "dates_text": comp["dates_text"],
+            "format": comp["format"],       # "онлайн" / "офлайн"
+            "dates_text": comp["dates_text"]  # строго "DD.MM.YYYY-DD.MM.YYYY"
         },
+        # Строгое форматирование дат по ТЗ:
+        # 1 день → "с 08:00 до 21:00 ..."
+        # 2 дня → "с 08:00 ... и с 8:00 ..."
+        # 3 дня → "с 14:00 ..., с 8:00 ... и с 8:00 ..."
+        # >3 дней → "с 14:00 до 21:00 в период с ... по ..."
         "dates_with_times": human_dates_with_times(comp["dates_text"]),
         "teams_das": teams_das,
         "teams_hta": teams_hta,
+        "show_resp_das": show_resp_das,
+        "show_resp_hta": show_resp_hta,
     }
 
 def render_report(comp_id: int, template_name: str = "report_template.docx") -> str:

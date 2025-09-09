@@ -1,83 +1,68 @@
 from __future__ import annotations
+from datetime import datetime, timedelta, date
 import re
-from datetime import datetime
-from dateutil import tz
 
-RU_MONTHS = {
-    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
-    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
-}
+RU_MONTHS_GEN = [
+    None, "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря"
+]
 
-TZ = tz.gettz("Europe/Rome")
+STRICT_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{4}$")
 
-DATE_RE = re.compile(r"^\s*(\d{1,2})\s+([А-Яа-яЁё]+)(?:\s+(\d{4}))?\s*$")
+def _fmt_genitive(d: date) -> str:
+    return f"{d.day} {RU_MONTHS_GEN[d.month]} {d.year} года"
 
-def _normalize_parts(dates_text: str) -> list[str]:
-    # Разобьём по запятым и союзу "и"
-    raw = re.split(r",|\s+и\s+", dates_text.replace("И", "и"))
-    parts = [p.strip() for p in raw if p.strip()]
-    return parts
-
-def _parse_one(part: str, default_year: int | None = None) -> datetime | None:
-    m = DATE_RE.match(part)
-    if not m:
+def _parse_strict_range(s: str) -> tuple[date, date] | None:
+    if not s or " " in s or not STRICT_RE.match(s):
         return None
-    day = int(m.group(1))
-    mon_name = m.group(2).lower()
-    mon = RU_MONTHS.get(mon_name)
-    if not mon:
-        return None
-    year = int(m.group(3)) if m.group(3) else (default_year or datetime.now(TZ).year)
     try:
-        return datetime(year, mon, day, tzinfo=TZ)
-    except ValueError:
+        d1 = datetime.strptime(s[:10], "%d.%m.%Y").date()
+        d2 = datetime.strptime(s[11:], "%d.%m.%Y").date()
+        if d1 > d2:
+            return None
+        return d1, d2
+    except Exception:
         return None
 
-def parse_dates_list(dates_text: str) -> list[datetime]:
-    parts = _normalize_parts(dates_text)
-    year_hint = None
-    # если где-то указан год — используем его как «основной»
-    for p in parts:
-        m = DATE_RE.match(p)
-        if m and m.group(3):
-            year_hint = int(m.group(3))
-            break
-    result: list[datetime] = []
-    for p in parts:
-        dt = _parse_one(p, default_year=year_hint)
-        if dt:
-            result.append(dt)
-    return result
+def human_dates_with_times(dates_text: str) -> str:
+    """
+    Вход: строго 'DD.MM.YYYY-DD.MM.YYYY' (без пробелов).
+    Выход:
+      • 1 день:  'с 08:00 до 21:00 29 марта 2025 года'
+      • 2 дня:  'с 08:00 до 21:00 29 марта 2025 года и с 8:00 до 21:00 30 марта 2025 года'
+      • 3 дня:  'с 14:00 до 21:00 28 марта 2025 года, с 8:00 до 21:00 29 марта 2025 года и с 8:00 до 21:00 30 марта 2025 года'
+      • >3 дней: 'с 14:00 до 21:00 в период с 18 сентября по 2 октября 2025 года'
+    """
+    rng = _parse_strict_range(dates_text)
+    if not rng:
+        # если прилетит старый формат, хотя по ТЗ мы его больше не принимаем
+        # вернём исходный текст, чтобы не упасть
+        return dates_text
 
-def human_dates_with_times(dates_text: str, start_time: str = "08:00", end_time: str = "21:00",
-                           join_with: str = ", ") -> str:
-    """Возвращает 'с 08:00 до 21:00 29 марта 2025 года, с 08:00 до 21:00 30 марта 2025 года'."""
-    parts = _normalize_parts(dates_text)
-    # сохраняем исходные словоформы как в тексте (для месяца),
-    # но если нет года — аккуратно допишем его к строке
-    dates = parse_dates_list(dates_text)
-    chunks: list[str] = []
-    for i, dt in enumerate(dates):
-        # возьмём исходный месяц словом из parts[i] (для естественности),
-        # либо построим из dt, если не получается
-        mo = None
-        mm = re.search(r"[А-Яа-яЁё]+", parts[i]) if i < len(parts) else None
-        if mm:
-            mo = mm.group(0)
-        # гарантируем год
-        year = dt.year
-        chunk = f"с {start_time} до {end_time} {dt.day} {mo or _month_to_genitive(dt.month)} {year} года"
-        chunks.append(chunk)
-    # соединитель: по умолчанию через запятую; хотите « и » — смените join_with=" и "
-    return join_with.join(chunks)
+    d1, d2 = rng
+    days = (d2 - d1).days + 1
 
-def _month_to_genitive(m: int) -> str:
-    # обратный словарь
-    for name, num in RU_MONTHS.items():
-        if num == m:
-            return name
-    return ""
+    if days == 1:
+        return f"с 08:00 до 21:00 {_fmt_genitive(d1)}"
+    if days == 2:
+        # специально: первый день '08:00', второй — '8:00'
+        return f"с 08:00 до 21:00 {_fmt_genitive(d1)} и с 8:00 до 21:00 {_fmt_genitive(d2)}"
+    if days == 3:
+        mid = d1 + timedelta(days=1)
+        return (
+            f"с 14:00 до 21:00 {_fmt_genitive(d1)}, "
+            f"с 8:00 до 21:00 {_fmt_genitive(mid)} и "
+            f"с 8:00 до 21:00 {_fmt_genitive(d2)}"
+        )
 
-def infer_last_date(dates_text: str) -> datetime | None:
-    dates = parse_dates_list(dates_text)
-    return max(dates) if dates else None
+    # > 3 дней — период
+    if d1.year == d2.year:
+        return (f"с 14:00 до 21:00 в период с {d1.day} {RU_MONTHS_GEN[d1.month]} "
+                f"по {d2.day} {RU_MONTHS_GEN[d2.month]} {d2.year} года")
+    else:
+        return (f"с 14:00 до 21:00 в период с {d1.day} {RU_MONTHS_GEN[d1.month]} {d1.year} года "
+                f"по {d2.day} {RU_MONTHS_GEN[d2.month]} {d2.year} года")
+
+def infer_last_date_iso(dates_text: str) -> str | None:
+    rng = _parse_strict_range(dates_text)
+    return rng[1].isoformat() if rng else None

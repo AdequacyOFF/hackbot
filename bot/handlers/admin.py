@@ -9,6 +9,8 @@ from persistence import repositories as repo
 from services.report import render_report
 from bot.cbdata import pack, unpack
 from aiogram.types import FSInputFile
+from ..validators import parse_date_range_strict
+from services.dates import infer_last_date_iso
 
 router = Router(name="admin")
 
@@ -27,21 +29,18 @@ async def show_admin_menu(m: Message):
 async def admin_list_comps(cq: CallbackQuery):
     comps = repo.competitions_list()
     if not comps:
-        return await cq.message.edit_text("Соревнований нет.")
+        await cq.message.edit_text("Соревнований нет.")
+        await cq.answer()
+        return
     text = "<b>Соревнования</b>\n" + "\n".join(
         f"{i}. {c['title']} — {c['dates_text']} ({c['format']})"
         for i, c in enumerate(comps, 1)
     ) + "\n\nОтправьте номер для просмотра."
     await cq.message.edit_text(text)
-    # Запомним список в message id -> не храним глобально; проще попросить номер в чате:
     await cq.answer()
 
 @router.message(F.text.regexp(r"^\d+$"))
 async def admin_pick_comp(m: Message, state: FSMContext):
-    # Этот хендлер зацепит и участника; защитим текстом:
-    # Попадём сюда чаще всего сразу после "Посмотреть список соревнований".
-    # Найдём по индексу.
-    # Чтобы не смешивать с участником — проверим наличие «админского контекста»: просто пытаемся построить список.
     comps = repo.competitions_list()
     if not comps:
         return
@@ -49,11 +48,9 @@ async def admin_pick_comp(m: Message, state: FSMContext):
     if idx < 0 or idx >= len(comps):
         return
     comp = comps[idx]
-    # Покажем все команды по данному comp
     teams = repo.teams_by_competition(comp["id"])
-    lines = [f"<b>{comp['title']}</b>\nДаты: {comp['dates_text']} ({comp['format']})"]
     if not teams:
-        lines.append("\nЗаявленных команд нет.")
+        await m.answer(f"<b>{comp['title']}</b>\nДаты: {comp['dates_text']} ({comp['format']})\n\nЗаявленных команд нет.")
     else:
         for t in teams:
             members = repo.members_by_team(t["id"])
@@ -81,16 +78,16 @@ async def del_team(cq: CallbackQuery):
     _, v = unpack(cq.data)
     team_id = int(v)
     repo.team_delete(team_id)
-    await cq.answer("Команда удалена.")
     await cq.message.edit_text("Команда удалена из списка.")
+    await cq.answer("Команда удалена.")
 
 @router.callback_query(F.data.startswith("del_comp"))
 async def del_comp(cq: CallbackQuery):
     _, v = unpack(cq.data)
     comp_id = int(v)
     repo.competition_delete(comp_id)
-    await cq.answer("Соревнование удалено.")
     await cq.message.edit_text("Соревнование удалено.")
+    await cq.answer("Соревнование удалено.")
 
 @router.callback_query(F.data.startswith("show_res"))
 async def show_results(cq: CallbackQuery):
@@ -98,7 +95,9 @@ async def show_results(cq: CallbackQuery):
     comp_id = int(v)
     rs = repo.results_by_competition(comp_id)
     if not rs:
-        return await cq.message.edit_text("Результатов нет.")
+        await cq.message.edit_text("Результатов нет.")
+        await cq.answer()
+        return
     await cq.message.edit_text("<b>Результаты:</b>")
     for r in rs:
         await cq.message.answer(
@@ -118,8 +117,11 @@ async def gen_report(cq: CallbackQuery):
     try:
         path = render_report(comp_id)
     except FileNotFoundError as e:
-        return await cq.message.answer(str(e))
-    await cq.message.answer_document(document=open(path, "rb"), caption="Готовый рапорт")
+        await cq.message.answer(str(e))
+        await cq.answer()
+        return
+    doc = FSInputFile(path, filename=os.path.basename(path))  # ключевая строка
+    await cq.message.answer_document(document=doc, caption="Готовый рапорт")
     await cq.answer()
 
 # ---------- Добавление соревнования админом ----------
@@ -139,11 +141,22 @@ async def a_add_title(m: Message, state: FSMContext):
 async def a_add_sponsor(m: Message, state: FSMContext):
     await state.update_data(sponsor=(m.text or "").strip())
     await state.set_state(AdminStates.add_dates)
-    await m.answer('Даты проведения. Пример: "29 марта, 30 марта"')
+    await m.answer(
+        'Даты проведения (строго без пробелов): "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"\n'
+        'Пример: 29.05.2025-30.05.2025\n'
+        'Значение не принимается, если есть пробелы или формат неверный.'
+    )
 
 @router.message(AdminStates.add_dates)
 async def a_add_dates(m: Message, state: FSMContext):
-    await state.update_data(dates=(m.text or "").strip())
+    txt = (m.text or "").strip()
+    if not parse_date_range_strict(txt):
+        return await m.answer(
+            'Даты проведения (строго без пробелов): "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"\n'
+            'Пример: 29.05.2025-30.05.2025\n'
+            'Значение не принимается, если есть пробелы или формат неверный.'
+        )
+    await state.update_data(dates=txt)
     await state.set_state(AdminStates.add_format)
     await m.answer("Формат:", reply_markup=kb_formats())
 
@@ -156,14 +169,15 @@ async def a_add_format(m: Message, state: FSMContext):
 @router.message(AdminStates.add_link)
 async def a_add_link(m: Message, state: FSMContext):
     data = await state.get_data()
+    end_iso = infer_last_date_iso(data["dates"])
     comp_id = repo.competition_add(
         title=data["title"],
         sponsor=data["sponsor"],
-        dates_text=data["dates"],
+        dates_text=data["dates"],   # сохраняем строгое значение
         fmt=data["fmt"],
         link=(m.text or "").strip() or None,
         description="",
-        end_date=None  # можно проставлять парсингом, если захотите
+        end_date=end_iso,
     )
     await m.answer(f"Соревнование добавлено (id={comp_id}).")
     await state.clear()
@@ -173,15 +187,13 @@ async def a_add_link(m: Message, state: FSMContext):
 async def adm_sugs(cq: CallbackQuery):
     pend = repo.suggestions_list("pending")
     if not pend:
-        return await cq.message.edit_text("Предложений нет.")
+        await cq.message.edit_text("Предложений нет.")
+        await cq.answer()
+        return
     await cq.message.edit_text("<b>Предложенные соревнования</b>")
     for s in pend:
-        kb = _ik([
-            [
-                InlineKeyboardButton(text="Принять", callback_data=pack("sug_ok", s["id"])),
-                InlineKeyboardButton(text="Отклонить", callback_data=pack("sug_no", s["id"])),
-            ]
-        ])
+        kb = _ik([[InlineKeyboardButton(text="Принять", callback_data=pack("sug_ok", s["id"])),
+                   InlineKeyboardButton(text="Отклонить", callback_data=pack("sug_no", s["id"]))]])
         await cq.message.answer(
             f"<b>{s['title']}</b>\nОрганизатор: {s['sponsor']}\nДаты: {s['dates_text']}\nФормат: {s['format']}\nСсылка: {s['link'] or '-'}",
             reply_markup=kb
@@ -192,31 +204,29 @@ async def adm_sugs(cq: CallbackQuery):
 async def sug_accept(cq: CallbackQuery):
     _, v = unpack(cq.data)
     s_id = int(v)
-    # Получим саму заявку чтобы перенести поля
-    suggestions = repo.suggestions_list("pending")
-    s = next((x for x in suggestions if x["id"] == s_id), None)
+    pend = repo.suggestions_list("pending")
+    s = next((x for x in pend if x["id"] == s_id), None)
     if not s:
-        return await cq.answer("Заявка не найдена", show_alert=True)
+        await cq.answer("Заявка не найдена", show_alert=True)
+        return
+    end_iso = infer_last_date_iso(s["dates_text"])
     repo.competition_add(
-        title=s["title"], sponsor=s["sponsor"], dates_text=s["dates_text"],
-        fmt=s["format"], link=s["link"], description="", end_date=None
+        title=s["title"],
+        sponsor=s["sponsor"],
+        dates_text=s["dates_text"],
+        fmt=s["format"],
+        link=s["link"],
+        description="",
+        end_date=end_iso
     )
     repo.suggestion_update_status(s_id, "approved")
     await cq.message.edit_text("Заявка принята и добавлена в список соревнований.")
     await cq.answer()
 
-@router.callback_query(F.data.startswith("gen_report"))
-async def gen_report(cq: CallbackQuery):
+@router.callback_query(F.data.startswith("sug_no"))
+async def sug_reject(cq: CallbackQuery):
     _, v = unpack(cq.data)
-    comp_id = int(v)
-    try:
-        path = render_report(comp_id)
-    except FileNotFoundError as e:
-        await cq.message.answer(str(e))
-        await cq.answer()
-        return
-
-    # <-- вот это ключевая строка: НЕ open(...), а FSInputFile
-    doc = FSInputFile(path, filename=os.path.basename(path))
-    await cq.message.answer_document(document=doc, caption="Готовый рапорт")
+    s_id = int(v)
+    repo.suggestion_update_status(s_id, "rejected")
+    await cq.message.edit_text("Заявка отклонена.")
     await cq.answer()
