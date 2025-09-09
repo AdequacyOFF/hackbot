@@ -4,7 +4,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from ..states import AdminStates
-from ..keyboards import kb_formats
+from ..keyboards import kb_formats, kb_menu
 from persistence import repositories as repo
 from services.report import render_report
 from bot.cbdata import pack, unpack
@@ -179,8 +179,11 @@ async def a_add_link(m: Message, state: FSMContext):
         description="",
         end_date=end_iso,
     )
-    await m.answer(f"Соревнование добавлено (id={comp_id}).")
     await state.clear()
+    await m.answer(
+        f"Соревнование добавлено (id={comp_id}).",
+        reply_markup=kb_menu(is_admin=True)  # админ точно админ 🙂
+    )
 
 # ---------- Предложенные соревнования ----------
 @router.callback_query(F.data.startswith("adm_sugs"))

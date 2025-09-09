@@ -7,6 +7,8 @@ from ..keyboards import kb_formats
 from persistence import repositories as repo
 from ..validators import parse_date_range_strict
 from services.dates import infer_last_date_iso
+from config import settings
+from ..keyboards import kb_menu
 
 router = Router(name="participant_suggest")
 
@@ -24,7 +26,11 @@ async def sug_title(m: Message, state: FSMContext):
 async def sug_sponsor(m: Message, state: FSMContext):
     await state.update_data(sponsor=(m.text or "").strip())
     await state.set_state(SuggestStates.dates)
-    await m.answer('Даты проведения соревнования. Пример: "29 марта, 30 марта"')
+    await m.answer(
+        'Даты проведения (строго без пробелов): "ДД.ММ.ГГГГ-ДД.ММ.ГГГГ"\n'
+        'Пример: 29.05.2025-30.05.2025\n'
+        'Значение не принимается, если есть пробелы или формат неверный.'
+    )
 
 @router.message(SuggestStates.dates)
 async def sug_dates(m: Message, state: FSMContext):
@@ -59,5 +65,9 @@ async def sug_link(m: Message, state: FSMContext):
         fmt=data["fmt"],
         link=(m.text or "").strip()
     )
-    await m.answer("Спасибо! Ваше предложение отправлено админу на рассмотрение.")
+    is_admin = m.from_user.id in settings.ADMIN_IDS
     await state.clear()
+    await m.answer(
+        "Спасибо! Ваше предложение отправлено админу на рассмотрение.",
+        reply_markup=kb_menu(is_admin=is_admin)
+    )
